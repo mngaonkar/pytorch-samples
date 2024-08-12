@@ -6,7 +6,7 @@ import torch.optim as optim
 from torchvision.models.detection import FasterRCNN
 import torch
 
-NUM_EPOCHS = 10
+NUM_EPOCHS = 100
 
 def get_model(num_classes):
     # Load a model pre-trained on COCO
@@ -49,7 +49,7 @@ val_loader = DataLoader(val_dataset, batch_size=2, shuffle=False, collate_fn=lam
 
 # Train the model
 # Set device
-device = torch.device('mps') if torch.backends.mps.is_available() else torch.device('cpu')
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 # Move model to the right device
 model.to(device)
@@ -90,9 +90,8 @@ for epoch in range(num_epochs):
             images = list(img.to(device) for img in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             loss_dict = model(images, targets)
-            val_loss = sum(loss for loss in loss_dict.values())
 
-        print(f"Validation Loss: {val_loss.item()}")
+        #print(f"Validation Loss: {loss_dict}")
 
 # Save the model
 torch.save(model.state_dict(), "faster_rcnn_model.pth")
