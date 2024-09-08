@@ -17,7 +17,8 @@ from transformers import (
     Trainer,
     pipeline,
     logging,
-    DataCollatorForLanguageModeling
+    DataCollatorForLanguageModeling,
+    DataCollatorWithPadding,
 )
 
 import json
@@ -26,9 +27,14 @@ from peft import LoraConfig, PeftModel, get_peft_model
 
 from dataset import TrainingDataset
 
-BASE_MODEL = "mistralai/Mistral-7B-v0.1"
-NEW_MODEL = "Mistral-7B-v0.1-sft"
-TRAIN_DATA_NAMES = ["train", "valid", "test"]
+from constants import (
+    BASE_MODEL,
+    NEW_MODEL,
+    TRAIN_DATA_NAMES,
+    STOP_TOKEN,
+    HUMAN_TOKEN,
+    BOT_TOKEN,
+)
 
 def load_dataset(args):
     """Load dataset from local folder """
@@ -45,7 +51,10 @@ def load_dataset(args):
             logger.critical(f"Failed to load data {data_path}")
             raise
 
+        logger.info(f"loaded {len(dataset)} entries.")
         logger.info("done.")
+
+        return dataset[:]
     
     logger.info("loading dataset...")
     train, val, test = [check_and_load_dataset(name) for name in TRAIN_DATA_NAMES]
@@ -54,10 +63,112 @@ def load_dataset(args):
     return train, val, test
 
 
-
-def train_model(args):
+def train_model(args, training_dataset):
     """ Rock and roll """
     logger.info("starting model training...")
+
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=False,
+    )
+
+    # Initialized model
+    logger.info("configuring model...")
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        quantization_config=quant_config,
+        device_map={"":0},
+    )
+
+    model.config.use_cache = False
+    model.config.pretraining_tp = 1
+    logger.info("model configured.")
+
+    logger.info("configuring tokenizer...")
+    # Initialize tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+
+    model.resize_token_embeddings(len(tokenizer))
+    logger.info("tokenizer configuration done")
+
+    logger.info("pre SFT model output: ")
+    prompt = "table: 1-10015132-16 columns: Player, No., Nationality, Position, Years in Toronto, School/Club Team Q: What is terrence ross' nationality A: "
+    old_pipeline = pipeline(task="text-generation", model=model, tokenizer=tokenizer, max_length=200)
+    result = old_pipeline(prompt)
+    print(result[0]['generated_text'])
+
+    # Configure LoRA
+    peft_args = LoraConfig(
+        lora_alpha=16,
+        lora_dropout=0.1,
+        r=64,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, peft_args)
+
+    model.print_trainable_parameters()
+
+    # Configure training parameters
+    training_params = TrainingArguments(
+        # output_dir="./output",
+        # logging_dir="./logs",
+        # num_train_epochs = args.iters,
+        # per_device_train_batch_size=2,
+        # per_device_eval_batch_size=4,
+        # gradient_accumulation_steps=16,
+        # logging_steps=5,
+        # learning_rate=2e-4,
+        # load_best_model_at_end=True,
+        # evaluation_strategy="epoch",
+        # save_strategy="epoch",
+        # warmup_ratio=0.1,
+        # lr_scheduler_type="cosine",
+
+        output_dir='./output',
+        evaluation_strategy="epoch",
+        per_device_train_batch_size=8,
+        per_device_eval_batch_size=8,
+        num_train_epochs=args.iters,
+        weight_decay=0.01
+    )
+
+    train = training_dataset["train"]
+    valid = training_dataset["valid"]
+
+    train = list(map(lambda x: tokenizer(x, truncation=True, padding='max_length'), train))
+    valid = list(map(lambda x: tokenizer(x, truncation=True, padding='max_length'), valid))
+
+    logger.info(f"train dataset length = {len(train)}")
+
+    logger.info("sample tokenized value:")
+    print(train[10])
+
+    data_collator = data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False,                  # Set to True for Masked Language Modeling
+        mlm_probability=0.15,      # Probability of masking tokens
+        pad_to_multiple_of=8       # Pad to a multiple of 8 for better performance
+    )
+
+    # Configure trainer
+    trainer = Trainer(
+        model=model,
+        args=training_params,
+        train_dataset=train,
+        eval_dataset=valid,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+    )
+
+    # Rock n Roll
+    logger.info("starting training...")
+    trainer.train()
+    trainer.model.save_pretrained(NEW_MODEL)
 
     logger.info("model training completed.")
     
@@ -97,7 +208,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     logger.debug(args)
-    train, val, test = load_dataset(args)
-    logger.debug(train)
-
-    train_model(args)
+    train, valid, test = load_dataset(args)
+    training_dataset = {"train": train, "valid": valid, "test":test}
+    train_model(args, training_dataset)

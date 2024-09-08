@@ -24,7 +24,15 @@ class TrainingDataset():
             self._key = key
 
     def __getitem__(self, idx: int):
-        return self._data[idx][self._key]
+        if isinstance(idx, slice):
+            start = idx.start if idx.start is not None else 0
+            stop = idx.stop if idx.stop is not None else len(self._data)
+            step = idx.step if idx.step is not None else 1
+            return [x[self._key] for x in self._data[start:stop:step]]
+        elif isinstance(idx, int):
+            return self._data[idx][self._key]
+        else:
+            raise TypeError("invalid index, not an integer or slice")
 
     def __len__(self):
         return len(self._data)
