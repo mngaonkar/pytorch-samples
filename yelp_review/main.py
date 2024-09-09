@@ -8,6 +8,8 @@ import numpy as np
 
 NUM_TRAIN_SAMPLES = 100
 NUM_TEST_SAMPLES = 100
+NEW_MODEL = "yelp_review_full_model"
+NUM_EPOCHS = 10
 
 def load_dataset_from_hf(dataset_name):
     dataset = load_dataset(dataset_name)
@@ -62,7 +64,7 @@ def main():
                                       eval_strategy="epoch", 
                                       per_device_train_batch_size=8, 
                                       per_device_eval_batch_size=8, 
-                                      num_train_epochs=5, 
+                                      num_train_epochs=NUM_EPOCHS, 
                                       logging_dir="test_trainer/logs", 
                                       logging_steps=10, 
                                       eval_steps=10, 
@@ -80,6 +82,14 @@ def main():
     )
 
     trainer.train()
+    trainer.model.save_pretrained(NEW_MODEL)
+
+    # Inferencing
+    text = "I really enjoyed this movie!"
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    output = model(**inputs)
+    prediction = np.argmax(output.logits, axis=-1)
+    print(f"Rating: {prediction}")
 
 if __name__ == '__main__':
     main()
