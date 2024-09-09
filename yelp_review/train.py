@@ -1,4 +1,6 @@
 from datasets import load_dataset
+import torch
+
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments,
     DataCollatorWithPadding
@@ -48,6 +50,17 @@ def main():
         id2label=id2label,
         label2id=label2id
         )
+    # Freeze all BERT layers (except the classification head)
+    # for param in model.base_model.parameters():
+    #     param.requires_grad = False
+
+    # Freeze the first 10 layers of BERT
+    for name, param in model.named_parameters():
+        if "encoder.layer" in name:
+            layer_num = int(name.split(".")[3])
+            if layer_num < 10:
+                param.requires_grad = False
+
     model.to("mps")
 
     def compute_metrics(pred):
@@ -82,14 +95,9 @@ def main():
     )
 
     trainer.train()
-    trainer.model.save_pretrained(NEW_MODEL)
+    trainer.evaluate()
 
-    # Inferencing
-    text = "I really enjoyed this movie!"
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    output = model(**inputs)
-    prediction = np.argmax(output.logits, axis=-1)
-    print(f"Rating: {prediction}")
+    trainer.model.save_pretrained(NEW_MODEL)
 
 if __name__ == '__main__':
     main()
