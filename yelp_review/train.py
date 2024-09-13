@@ -8,15 +8,28 @@ from transformers import (
 import evaluate
 import numpy as np
 
-NUM_TRAIN_SAMPLES = 100
-NUM_TEST_SAMPLES = 100
+NUM_TRAIN_SAMPLES = 1000
+NUM_TEST_SAMPLES = 1000
 NEW_MODEL = "yelp_review_full_model"
-NUM_EPOCHS = 10
+NUM_EPOCHS = 50
+DEVICE_TYPE = "cuda"
+TRAIN_BATCH_SIZE = 80
+EVAL_BATCH_SIZE = 80
+LEARNING_RATE = 1e-5
+WEIGHT_DECAY = 0.01
 
 def load_dataset_from_hf(dataset_name):
     dataset = load_dataset(dataset_name)
     return dataset
 
+class CustomTrainer(Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def create_optimizer(self):
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+        return self.optimizer
+    
 
 def main():
     dataset = load_dataset_from_hf("yelp_review_full")
@@ -61,7 +74,7 @@ def main():
             if layer_num < 10:
                 param.requires_grad = False
 
-    model.to("mps")
+    model.to(DEVICE_TYPE)
 
     def compute_metrics(pred):
         metric = evaluate.load("accuracy")
@@ -69,23 +82,24 @@ def main():
         logits, labels = pred
         predictions = np.argmax(logits, axis=-1)
         accuracy = metric.compute(predictions=predictions, references=labels)
-        print(accuracy)
+
         return accuracy
     
     
     training_args = TrainingArguments(output_dir="test_trainer", 
                                       eval_strategy="epoch", 
-                                      per_device_train_batch_size=8, 
-                                      per_device_eval_batch_size=8, 
+                                      per_device_train_batch_size=TRAIN_BATCH_SIZE, 
+                                      per_device_eval_batch_size=EVAL_BATCH_SIZE, 
                                       num_train_epochs=NUM_EPOCHS, 
-                                      logging_dir="test_trainer/logs", 
+                                      logging_dir="./logs", 
                                       logging_steps=10, 
                                       eval_steps=10, 
-                                    #   learning_rate=1e-5,
+                                      learning_rate=LEARNING_RATE,
                                       metric_for_best_model="accuracy",
+                                      report_to="tensorboard"
                                       )
     
-    trainer = Trainer(
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset_tokenized,
