@@ -3,20 +3,30 @@ import torch
 
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments,
-    DataCollatorWithPadding
+    DataCollatorWithPadding,
+    BitsAndBytesConfig
 )
 import evaluate
 import numpy as np
 
-NUM_TRAIN_SAMPLES = 1000
+# Hyperparameters
+NUM_TRAIN_SAMPLES = 10000
 NUM_TEST_SAMPLES = 1000
 NEW_MODEL = "yelp_review_full_model"
-NUM_EPOCHS = 50
-DEVICE_TYPE = "cuda"
-TRAIN_BATCH_SIZE = 80
-EVAL_BATCH_SIZE = 80
-LEARNING_RATE = 1e-5
-WEIGHT_DECAY = 0.01
+NUM_EPOCHS = 5
+DEVICE_TYPE = "mps"
+TRAIN_BATCH_SIZE = 32
+EVAL_BATCH_SIZE = 32
+LEARNING_RATE = 5e-4
+WEIGHT_DECAY = 1e-4
+DROPOUT = 0.2
+
+# Model and dataset
+MODEL = "google-bert/bert-base-cased"
+# DATASET = "yelp_review_full"
+DATASET = "mgb-dx-meetup/product-reviews"
+
+torch.backends.quantized.engine = 'qnnpack'
 
 def load_dataset_from_hf(dataset_name):
     dataset = load_dataset(dataset_name)
@@ -27,18 +37,32 @@ class CustomTrainer(Trainer):
         super().__init__(*args, **kwargs)
     
     def create_optimizer(self):
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), 
+                                           lr=LEARNING_RATE,
+                                           weight_decay=WEIGHT_DECAY,
+                                           dropout=DROPOUT)
         return self.optimizer
     
 
 def main():
-    dataset = load_dataset_from_hf("yelp_review_full")
+    dataset = load_dataset_from_hf(DATASET)
+    # rename stars column to label
+    dataset = dataset.rename_column("stars", "label")
+
     print(dataset)
 
-    tokenizer = AutoTokenizer.from_pretrained("google-bert/bert-base-cased")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL,
+                                              padding=True,
+                                              truncation=True,
+                                              return_tensors="pt")
 
     def tokenize_function(examples):
-        return tokenizer(examples["text"], truncation=True)
+        return tokenizer(examples["review_body"], 
+                         truncation=True, 
+                         padding=True, 
+                         max_length=256, 
+                         return_tensors="pt"
+                         )
     
     train_dataset = dataset['train'].shuffle(seed=42).select(range(NUM_TRAIN_SAMPLES))
     test_dataset = dataset['test'].shuffle(seed=42).select(range(NUM_TEST_SAMPLES)) 
@@ -49,32 +73,41 @@ def main():
     train_dataset_tokenized = train_dataset.map(tokenize_function, batched=True)
     test_dataset_tokenized = test_dataset.map(tokenize_function, batched=True)
 
-    train_dataset_tokenized.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
-    test_dataset_tokenized.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    # train_dataset_tokenized.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
+    # test_dataset_tokenized.set_format(type='torch', columns=['input_ids', 'attention_mask', 'label'])
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer, return_tensors="pt")
 
-    id2label = {1: "1", 2: "2", 3: "3", 4: "4", 5: "5"}
-    label2id = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
+    # id2label = {1: "1", 2: "2", 3: "3", 4: "4", 5: "5"}
+    # label2id = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5}
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        "google-bert/bert-base-cased", 
+        MODEL, 
         num_labels=5,
-        id2label=id2label,
-        label2id=label2id
+        # id2label=id2label,
+        # label2id=label2id,
         )
+
+    # quantized_model = torch.quantization.quantize_dynamic(
+    #     model, 
+    #     {torch.nn.Linear},  # Specify the layers to be quantized (e.g., Linear layers)
+    #     dtype=torch.qint8    # Use 8-bit integer quantization
+    # )
+
+    quantized_model = model
+    
     # Freeze all BERT layers (except the classification head)
-    # for param in model.base_model.parameters():
-    #     param.requires_grad = False
+    for param in model.base_model.parameters():
+        param.requires_grad = False
 
     # Freeze the first 10 layers of BERT
-    for name, param in model.named_parameters():
-        if "encoder.layer" in name:
-            layer_num = int(name.split(".")[3])
-            if layer_num < 10:
-                param.requires_grad = False
+    # for name, param in quantized_model.named_parameters():
+    #     if "encoder.layer" in name:
+    #         layer_num = int(name.split(".")[3])
+    #         if layer_num < 10:
+    #             param.requires_grad = False
 
-    model.to(DEVICE_TYPE)
+    quantized_model.to(DEVICE_TYPE)
 
     def compute_metrics(pred):
         metric = evaluate.load("accuracy")
@@ -100,7 +133,7 @@ def main():
                                       )
     
     trainer = CustomTrainer(
-        model=model,
+        model=quantized_model,
         args=training_args,
         train_dataset=train_dataset_tokenized,
         eval_dataset=test_dataset_tokenized,
