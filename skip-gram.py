@@ -113,6 +113,9 @@ def train_skipgram(corpus, vocab_size, embedding_dim=EMBEDDING_DIM, window_size=
 
     return model
 
+def consine_similarity(vector_a, vector_b):
+    return torch.dot(vector_a, vector_b) / (torch.norm(vector_a) * torch.norm(vector_b))
+
 if __name__ == "__main__":
     model = train_skipgram(corpus, len(vocab), embedding_dim=EMBEDDING_DIM, window_size=WINDOW_SIZE, num_negatives=NUM_NEGATIVES, epochs=NUM_EPOCHS)
 
@@ -120,3 +123,11 @@ if __name__ == "__main__":
     embeddings = model.target_embeddings.weight.detach().numpy()
     # logger.warning(f"Learned embeddings: {embeddings}")
     print(f"Shape of embeddings: {embeddings.shape}")
+
+    word = "brown"
+    print(f"Embedding for the word {word}: {embeddings[vocab[word]]}")
+
+    word_1 = "brown"
+    word_2 = "fox"
+    similarties = consine_similarity(torch.tensor(embeddings[vocab[word_1]]), torch.tensor(embeddings[vocab[word_2]]))
+    print(f"Cosine similarity between {word_1} and {word_2}: {similarties:.4f}")
