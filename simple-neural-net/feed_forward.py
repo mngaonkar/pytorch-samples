@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.profiler import profile, ProfilerActivity
 
 class FeedForward(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
@@ -15,11 +16,19 @@ class FeedForward(nn.Module):
         return x    
     
 if __name__ == "__main__":
-    input_tensor = torch.randn(3, 5)
-    model = FeedForward(5, 10, 1)
-    print(model)
+    # MPS profiling - use CPU activity and move tensors to MPS device
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    print(f"Using device: {device}")
     
-    output = model(input_tensor)
+    profiler = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, profile_memory=True)
+    with profiler:
+        input_tensor = torch.randn(3, 5).to(device)
+        model = FeedForward(5, 10, 1).to(device)
+        print(model)
+        
+        output = model(input_tensor)
 
-    print(output)
+        print(output)
+    
+    print(profiler.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
         
