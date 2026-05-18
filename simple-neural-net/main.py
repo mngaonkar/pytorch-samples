@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plts
 
+GPU_DEVICE='cuda'
 
 class ConvNet(nn.Module):
     """ConvNet class defines the neural network model."""
@@ -48,7 +49,7 @@ model = nn.Sequential(
     nn.Dropout(0.25),
     nn.Linear(64, 10),
     nn.LogSoftmax(dim=1)
-).to('mps')
+).to(GPU_DEVICE)
 
 def train(model, device, train_dataloader, optim, epoch):
     model.train()
@@ -100,11 +101,11 @@ optim = optim.SGD(model.parameters(), lr=0.01)
 
 # Train the model
 for epoch in range(1, 3):
-    train(model, 'mps', train_dataloader, optim, epoch)
-    test(model, 'mps', test_dataloader)
+    train(model, GPU_DEVICE, train_dataloader, optim, epoch)
+    test(model, GPU_DEVICE, test_dataloader)
 
 test_samples, _ = next(iter(test_dataloader))
-test_samples = test_samples.to('mps')
+test_samples = test_samples.to(GPU_DEVICE)
 output = model(test_samples)
 pred = output.argmax(dim=1)
 fig, axes = plts.subplots(4, 8, figsize=(20, 10))
